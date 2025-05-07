@@ -1,0 +1,2412 @@
+tthese are the src files:
+
+import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { 
+  Container, 
+  Typography, 
+  Button, 
+  Grid, 
+  Paper,
+  Box,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  useTheme,
+} from '@mui/material';
+import { Subject, StudentMarks, SequenceResult, TermResult, AnnualResult } from './types';
+import StudentModal from './components/StudentModal';
+import SubjectModal from './components/SubjectModal';
+import MarksTable from './components/MarksTable';
+import ResultsTable from './components/ResultsTable';
+import ReportModal from './components/ReportModal';
+import BulkMarksEntry from './components/BulkMarksEntry';
+import { generateStudentReport, generateResultsPDF } from './utils/pdfGenerator';
+
+function App() {
+  const { t, i18n } = useTranslation();
+  const theme = useTheme();
+  
+  // State management
+  const [students, setStudents] = useState<string[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [studentsOpen, setStudentsOpen] = useState(false);
+  const [subjectsOpen, setSubjectsOpen] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
+  const [bulkMarksModalOpen, setBulkMarksModalOpen] = useState(false);
+  const [marks, setMarks] = useState<StudentMarks[]>([]);
+  const [selectedSequence, setSelectedSequence] = useState<keyof StudentMarks>('firstSequence');
+  const [selectedResultView, setSelectedResultView] = useState<'sequence' | 'firstTerm' | 'secondTerm' | 'thirdTerm' | 'annual'>('sequence');
+  const [studentComments, setStudentComments] = useState<{[key: number]: {[key: string]: string}}>({});
+
+  // Results state
+  const [sequenceResults, setSequenceResults] = useState<SequenceResult[]>([]);
+  const [firstTermResults, setFirstTermResults] = useState<TermResult[]>([]);
+  const [secondTermResults, setSecondTermResults] = useState<TermResult[]>([]);
+  const [thirdTermResults, setThirdTermResults] = useState<TermResult[]>([]);
+  const [annualResults, setAnnualResults] = useState<AnnualResult[]>([]);
+  
+  // Statistics state
+  const [sequenceClassAverage, setSequenceClassAverage] = useState<number | null>(null);
+  const [firstTermClassAverage] = useState<number | null>(null);
+  const [secondTermClassAverage] = useState<number | null>(null);
+  const [thirdTermClassAverage] = useState<number | null>(null);
+  const [annualClassAverage] = useState<number | null>(null);
+  const [sequencePassPercentage, setSequencePassPercentage] = useState<number | null>(null);
+  const [firstTermPassPercentage] = useState<number | null>(null);
+  const [secondTermPassPercentage] = useState<number | null>(null);
+  const [thirdTermPassPercentage] = useState<number | null>(null);
+  const [annualPassPercentage] = useState<number | null>(null);
+
+  const PASSING_MARK = 10;
+
+  // Load data from localStorage
+  useEffect(() => {
+    const savedStudents = localStorage.getItem('students');
+    const savedSubjects = localStorage.getItem('subjects');
+    const savedMarks = localStorage.getItem('marks');
+    const savedComments = localStorage.getItem('studentComments');
+
+    if (savedStudents) setStudents(JSON.parse(savedStudents));
+    if (savedSubjects) setSubjects(JSON.parse(savedSubjects));
+    if (savedMarks) setMarks(JSON.parse(savedMarks));
+    if (savedComments) setStudentComments(JSON.parse(savedComments));
+  }, []);
+
+  // Save data to localStorage
+  useEffect(() => {
+    if (students.length > 0) localStorage.setItem('students', JSON.stringify(students));
+    if (subjects.length > 0) localStorage.setItem('subjects', JSON.stringify(subjects));
+    if (marks.length > 0) localStorage.setItem('marks', JSON.stringify(marks));
+    if (Object.keys(studentComments).length > 0) localStorage.setItem('studentComments', JSON.stringify(studentComments));
+  }, [students, subjects, marks, studentComments]);
+
+  // Language handler
+  const handleLanguageChange = (lang: string) => {
+    i18n.changeLanguage(lang);
+    localStorage.setItem('language', lang);
+  };
+
+  // Student handlers
+  const handleAddStudent = (name: string) => {
+    setStudents([...students, name]);
+    setMarks([...marks, {
+      firstSequence: {},
+      secondSequence: {},
+      thirdSequence: {},
+      fourthSequence: {},
+      fifthSequence: {},
+      sixthSequence: {},
+    }]);
+  };
+
+  const handleEditStudent = (index: number, name: string) => {
+    const updatedStudents = [...students];
+    updatedStudents[index] = name;
+    setStudents(updatedStudents);
+  };
+
+  const handleDeleteStudent = (index: number) => {
+    setStudents(students.filter((_, i) => i !== index));
+    setMarks(marks.filter((_, i) => i !== index));
+    const updatedComments = { ...studentComments };
+    delete updatedComments[index];
+    setStudentComments(updatedComments);
+  };
+
+  // Subject handlers
+  const handleAddSubject = (name: string, total: number) => {
+    setSubjects([...subjects, { name, total }]);
+  };
+
+  const handleEditSubject = (index: number, name: string, total: number) => {
+    const updatedSubjects = [...subjects];
+    updatedSubjects[index] = { name, total };
+    setSubjects(updatedSubjects);
+  };
+
+  const handleDeleteSubject = (index: number) => {
+    const subjectToDelete = subjects[index].name;
+    setSubjects(subjects.filter((_, i) => i !== index));
+    
+    // Remove the deleted subject's marks
+    const updatedMarks = marks.map(studentMarks => {
+      const newMarks = { ...studentMarks };
+      Object.keys(newMarks).forEach(sequence => {
+        delete newMarks[sequence as keyof StudentMarks][subjectToDelete];
+      });
+      return newMarks;
+    });
+    setMarks(updatedMarks);
+  };
+
+  // Mark handlers
+  const handleMarkChange = (
+    studentIndex: number,
+    subject: string,
+    mark: string,
+    maxTotal: number
+  ) => {
+    const numericMark = mark === "" ? "" : Number(mark);
+    if (
+      mark === "" || 
+      (typeof numericMark === "number" && !isNaN(numericMark) && numericMark >= 0 && numericMark <= maxTotal)
+    ) {
+      setMarks(prevMarks => {
+        const updatedMarks = [...prevMarks];
+        updatedMarks[studentIndex] = {
+          ...updatedMarks[studentIndex],
+          [selectedSequence]: {
+            ...updatedMarks[studentIndex][selectedSequence],
+            [subject]: numericMark
+          }
+        };
+        return updatedMarks;
+      });
+    }
+  };
+
+  // Comment handler
+  const handleCommentChange = (
+    studentIndex: number,
+    sequence: string,
+    comment: string
+  ) => {
+    setStudentComments(prev => ({
+      ...prev,
+      [studentIndex]: {
+        ...prev[studentIndex],
+        [sequence]: comment
+      }
+    }));
+  };
+
+  // Calculate results
+  const calculateSequenceResults = () => {
+    const results = students.map((student, index) => {
+      let totalMarks = 0;
+      let totalPossible = 0;
+
+      subjects.forEach(subject => {
+        const mark = marks[index][selectedSequence][subject.name] || 0;
+        totalMarks += Number(mark);
+        totalPossible += subject.total;
+      });
+
+      const average = (totalMarks / totalPossible) * 20;
+      return { student, totalMarks, average };
+    });
+
+    const sortedResults = [...results].sort((a, b) => b.average - a.average);
+    const resultsWithRank = sortedResults.map((result, idx) => ({
+      ...result,
+      rank: idx + 1
+    }));
+
+    const classAvg = results.reduce((sum, { average }) => sum + average, 0) / results.length;
+    const passCount = results.filter(({ average }) => average >= PASSING_MARK).length;
+    const passPerc = (passCount / results.length) * 100;
+
+    setSequenceResults(resultsWithRank);
+    setSequenceClassAverage(classAvg);
+    setSequencePassPercentage(passPerc);
+    setSelectedResultView('sequence');
+  };
+
+  // Calculate term results
+  const calculateTermResults = () => {
+    // Implementation of term results calculation
+    // This would combine sequence results for each term
+    // and calculate term averages and rankings
+  };
+
+  // Generate reports
+  const handleGenerateStudentReport = (studentIndex: number) => {
+    const student = students[studentIndex];
+    generateStudentReport(
+      student,
+      studentIndex,
+      marks[studentIndex],
+      subjects,
+      studentComments,
+      selectedSequence,
+      selectedResultView,
+      firstTermResults,
+      secondTermResults,
+      thirdTermResults,
+      annualResults,
+      t
+    );
+  };
+
+  const handleGenerateAllReports = () => {
+    students.forEach((_, index) => handleGenerateStudentReport(index));
+  };
+
+  // Reset data
+  const handleResetData = () => {
+    if (window.confirm(t('confirm_reset'))) {
+      localStorage.clear();
+      setStudents([]);
+      setSubjects([]);
+      setMarks([]);
+      setStudentComments({});
+      setSequenceResults([]);
+      setFirstTermResults([]);
+      setSecondTermResults([]);
+      setThirdTermResults([]);
+      setAnnualResults([]);
+      setSelectedSequence('firstSequence');
+      setSelectedResultView('sequence');
+    }
+  };
+
+  // Check if there are any marks entered
+  const hasMarks = marks.some(studentMarks =>
+    Object.values(studentMarks[selectedSequence]).some(mark => mark !== '')
+  );
+
+  return (
+    <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Grid container spacing={3}>
+        <Grid item xs={12} sx={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          mb: 3
+        }}>
+          <Typography 
+            variant="h4" 
+            component="h1"
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              color: theme.palette.primary.main,
+              fontWeight: 'bold'
+            }}
+          >
+            <span style={{ color: theme.palette.primary.main }}>Brain</span>
+            <span style={{ color: theme.palette.secondary.main }}>Board</span>
+          </Typography>
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>{t('language')}</InputLabel>
+            <Select
+              value={i18n.language}
+              label={t('language')}
+              onChange={(e) => handleLanguageChange(e.target.value)}
+            >
+              <MenuItem value="en">{t('english')}</MenuItem>
+              <MenuItem value="fr">{t('french')}</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+
+        <Grid item xs={12}>
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <Button 
+              variant="contained" 
+              onClick={() => setStudentsOpen(true)}
+              sx={{ 
+                bgcolor: theme.palette.primary.main,
+                '&:hover': {
+                  bgcolor: theme.palette.primary.dark,
+                }
+              }}
+            >
+              {t('students')}
+            </Button>
+            <Button 
+              variant="contained"
+              color="secondary"
+              onClick={() => setSubjectsOpen(true)}
+              disabled={students.length === 0}
+              sx={{ 
+                bgcolor: theme.palette.secondary.main,
+                '&:hover': {
+                  bgcolor: theme.palette.secondary.dark,
+                }
+              }}
+            >
+              {t('subjects')}
+            </Button>
+            <Button 
+              variant="outlined" 
+              color="error" 
+              onClick={handleResetData}
+            >
+              {t('reset_data')}
+            </Button>
+          </Box>
+        </Grid>
+
+        {students.length > 0 && subjects.length > 0 && (
+          <Grid item xs={12}>
+            <Paper 
+              elevation={3} 
+              sx={{ 
+                p: 3,
+                borderRadius: 2,
+                transition: 'box-shadow 0.3s ease-in-out',
+                '&:hover': {
+                  boxShadow: 6,
+                }
+              }}
+            >
+              <Typography variant="h6" gutterBottom>
+                {t('enter_marks_comments')}
+              </Typography>
+              
+              <FormControl fullWidth sx={{ mb: 2 }}>
+                <InputLabel>{t('sequence')}</InputLabel>
+                <Select
+                  value={selectedSequence}
+                  label={t('sequence')}
+                  onChange={(e) => setSelectedSequence(e.target.value as keyof StudentMarks)}
+                >
+                  <MenuItem value="firstSequence">{t('first_sequence')}</MenuItem>
+                  <MenuItem value="secondSequence">{t('second_sequence')}</MenuItem>
+                  <MenuItem value="thirdSequence">{t('third_sequence')}</MenuItem>
+                  <MenuItem value="fourthSequence">{t('fourth_sequence')}</MenuItem>
+                  <MenuItem value="fifthSequence">{t('fifth_sequence')}</MenuItem>
+                  <MenuItem value="sixthSequence">{t('sixth_sequence')}</MenuItem>
+                </Select>
+              </FormControl>
+
+              <MarksTable
+                students={students}
+                subjects={subjects}
+                marks={marks}
+                selectedSequence={selectedSequence}
+                studentComments={studentComments}
+                onMarkChange={handleMarkChange}
+                onCommentChange={handleCommentChange}
+              />
+
+              <Box sx={{ display: 'flex', gap: 2, mt: 3, flexWrap: 'wrap' }}>
+                <Button
+                  variant="contained"
+                  onClick={calculateSequenceResults}
+                  disabled={!hasMarks}
+                >
+                  {t('calculate_results')}
+                </Button>
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  onClick={calculateTermResults}
+                  disabled={!hasMarks}
+                >
+                  {t('term_results')}
+                </Button>
+                <Button
+                  variant="contained"
+                  color="info"
+                  onClick={() => setReportModalOpen(true)}
+                  disabled={!hasMarks}
+                >
+                  {t('student_reports')}
+                </Button>
+                <Button
+                  variant="contained"
+                  color="warning"
+                  onClick={() => setBulkMarksModalOpen(true)}
+                >
+                  {t('bulk_marks_entry')}
+                </Button>
+              </Box>
+            </Paper>
+          </Grid>
+        )}
+
+        {sequenceResults.length > 0 && (
+          <Grid item xs={12}>
+            <Paper 
+              elevation={3} 
+              sx={{ 
+                p: 3,
+                borderRadius: 2,
+                mt: 2,
+                transition: 'box-shadow 0.3s ease-in-out',
+                '&:hover': {
+                  boxShadow: 6,
+                }
+              }}
+            >
+              <ResultsTable
+                selectedResultView={selectedResultView}
+                onResultViewChange={setSelectedResultView}
+                sequenceResults={sequenceResults}
+                firstTermResults={firstTermResults}
+                secondTermResults={secondTermResults}
+                thirdTermResults={thirdTermResults}
+                annualResults={annualResults}
+                sequenceClassAverage={sequenceClassAverage}
+                firstTermClassAverage={firstTermClassAverage}
+                secondTermClassAverage={secondTermClassAverage}
+                thirdTermClassAverage={thirdTermClassAverage}
+                annualClassAverage={annualClassAverage}
+                sequencePassPercentage={sequencePassPercentage}
+                firstTermPassPercentage={firstTermPassPercentage}
+                secondTermPassPercentage={secondTermPassPercentage}
+                thirdTermPassPercentage={thirdTermPassPercentage}
+                annualPassPercentage={annualPassPercentage}
+                passingMark={PASSING_MARK}
+                onDownloadPDF={() => {
+                  generateResultsPDF(
+                    t(selectedResultView),
+                    selectedResultView === 'sequence' ? sequenceResults :
+                    selectedResultView === 'firstTerm' ? firstTermResults :
+                    selectedResultView === 'secondTerm' ? secondTermResults :
+                    selectedResultView === 'thirdTerm' ? thirdTermResults :
+                    annualResults,
+                    selectedResultView === 'sequence' ? sequenceClassAverage! :
+                    selectedResultView === 'firstTerm' ? firstTermClassAverage! :
+                    selectedResultView === 'secondTerm' ? secondTermClassAverage! :
+                    selectedResultView === 'thirdTerm' ? thirdTermClassAverage! :
+                    annualClassAverage!,
+                    selectedResultView === 'sequence' ? sequencePassPercentage! :
+                    selectedResultView === 'firstTerm' ? firstTermPassPercentage! :
+                    selectedResultView === 'secondTerm' ? secondTermPassPercentage! :
+                    selectedResultView === 'thirdTerm' ? thirdTermPassPercentage! :
+                    annualPassPercentage!,
+                    selectedResultView === 'annual',
+                    t
+                  );
+                }}
+                isDownloadDisabled={false}
+              />
+            </Paper>
+          </Grid>
+        )}
+      </Grid>
+
+      <StudentModal
+        open={studentsOpen}
+        onClose={() => setStudentsOpen(false)}
+        students={students}
+        onAddStudent={handleAddStudent}
+        onEditStudent={handleEditStudent}
+        onDeleteStudent={handleDeleteStudent}
+      />
+
+      <SubjectModal
+        open={subjectsOpen}
+        onClose={() => setSubjectsOpen(false)}
+        subjects={subjects}
+        onAddSubject={handleAddSubject}
+        onEditSubject={handleEditSubject}
+        onDeleteSubject={handleDeleteSubject}
+      />
+
+      <ReportModal
+        open={reportModalOpen}
+        onClose={() => setReportModalOpen(false)}
+        students={students}
+        onGenerateReport={handleGenerateStudentReport}
+        onGenerateAllReports={handleGenerateAllReports}
+        selectedSequence={selectedSequence}
+        selectedResultView={selectedResultView}
+      />
+
+      <BulkMarksEntry
+        open={bulkMarksModalOpen}
+        onClose={() => setBulkMarksModalOpen(false)}
+        students={students}
+        subjects={subjects}
+        selectedSequence={selectedSequence}
+        onSave={handleMarkChange}
+      />
+    </Container>
+  );
+}
+
+export default App;
+
+
+i18n.ts code file:
+
+import i18n from "i18next";
+import { initReactI18next } from "react-i18next";
+import en from "./locales/en.json";
+import fr from "./locales/fr.json";
+
+const resources = {
+  en: { translation: en },
+  fr: { translation: fr },
+};
+
+i18n.use(initReactI18next).init({
+  resources,
+  lng: localStorage.getItem("language") || "en",
+  fallbackLng: "en",
+  interpolation: {
+    escapeValue: false,
+  },
+});
+
+export default i18n;
+
+
+
+main.tsx code:
+import React, { Suspense } from "react";
+import ReactDOM from "react-dom/client";
+import { I18nextProvider } from "react-i18next";
+import App from "./App";
+import i18n from "./i18n";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import CssBaseline from "@mui/material/CssBaseline";
+
+const theme = createTheme({
+  palette: {
+    primary: {
+      main: "#1976d2", // Blue
+      light: "#4791db",
+      dark: "#115293",
+    },
+    secondary: {
+      main: "#2e7d32", // Apple green
+      light: "#4caf50",
+      dark: "#1b5e20",
+    }
+  },
+  typography: {
+    fontFamily: "'Roboto', 'Helvetica', 'Arial', sans-serif",
+    h4: {
+      fontWeight: 500,
+      background: 'linear-gradient(45deg, #1976d2, #2e7d32)',
+      WebkitBackgroundClip: 'text',
+      WebkitTextFillColor: 'transparent',
+    },
+    h6: {
+      fontWeight: 500,
+    },
+  },
+  components: {
+    MuiButton: {
+      styleOverrides: {
+        root: {
+          textTransform: "none",
+          fontWeight: 500,
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: "none",
+        },
+      },
+    },
+  },
+});
+
+const rootElement = document.getElementById("root")!;
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+  <React.StrictMode>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <I18nextProvider i18n={i18n}>
+        <Suspense fallback={
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+            Loading...
+          </div>
+        }>
+          <App />
+        </Suspense>
+      </I18nextProvider>
+    </ThemeProvider>
+  </React.StrictMode>
+);
+
+
+
+
+
+types.ts code:
+
+export interface Subject {
+  name: string;
+  total: number;
+}
+
+export interface SequenceMarks {
+  [subject: string]: number | "";
+}
+
+export interface StudentMarks {
+  firstSequence: SequenceMarks;
+  secondSequence: SequenceMarks;
+  thirdSequence: SequenceMarks;
+  fourthSequence: SequenceMarks;
+  fifthSequence: SequenceMarks;
+  sixthSequence: SequenceMarks;
+}
+
+export interface SequenceResult {
+  student: string;
+  totalMarks: number;
+  average: number;
+  rank: number;
+}
+
+export interface TermResult {
+  student: string;
+  totalMarks: number;
+  average: number;
+  rank: number;
+}
+
+export interface AnnualResult {
+  student: string;
+  firstTermAverage: number;
+  secondTermAverage: number;
+  thirdTermAverage: number;
+  finalAverage: number;
+  rank: number;
+}
+
+
+
+now here we have src/util file:
+
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { StudentMarks, Subject, SequenceResult, TermResult, AnnualResult } from "../types";
+
+export const generateStudentReport = (
+  student: string,
+  studentIndex: number,
+  studentMarks: StudentMarks,
+  subjects: Subject[],
+  studentComments: {
+    [studentIndex: number]: { [sequence: string]: string };
+  },
+  selectedSequence: keyof StudentMarks,
+  selectedResultView: "sequence" | "firstTerm" | "secondTerm" | "thirdTerm" | "annual",
+  firstTermResults: TermResult[],
+  secondTermResults: TermResult[],
+  thirdTermResults: TermResult[],
+  annualResults: AnnualResult[],
+  t: (key: string, options?: any) => string
+) => {
+  const doc = new jsPDF();
+  const currentDate = new Date().toLocaleDateString();
+
+  // Add BrainBoard header
+  doc.setFontSize(20);
+  doc.setTextColor(25, 118, 210); // blue color #1976d2
+  doc.text("Brain", 20, 15);
+  doc.setTextColor(46, 125, 50); // green color #2e7d32
+  doc.text("Board", 47, 15);
+
+  // Add date
+  doc.setFontSize(10);
+  doc.setTextColor(128, 128, 128); // gray color
+  doc.text(`Generated on: ${currentDate}`, 20, 25);
+
+  doc.setFontSize(16);
+  doc.setTextColor(0, 0, 0); // Reset to black
+  doc.text(`${t("student_reports")}: ${student}`, 20, 35);
+
+  const tableData: string[][] = [];
+
+  if (selectedResultView === "sequence") {
+    // Only show marks for selected sequence
+    subjects.forEach((subject) => {
+      const mark = studentMarks[selectedSequence][subject.name] ?? "-";
+      const comment = studentComments[studentIndex]?.[selectedSequence] || t("no_comment");
+      tableData.push([
+        subject.name,
+        mark.toString(),
+        comment,
+      ]);
+    });
+
+    autoTable(doc, {
+      startY: 45,
+      head: [[t("subject_name"), t("mark"), t("teacher_comment")]],
+      body: tableData,
+    });
+  } else {
+    // Show term or annual results
+    let result;
+    let columns;
+    
+    if (selectedResultView === "firstTerm") {
+      result = firstTermResults.find((r) => r.student === student);
+      columns = [[t("total_marks"), t("average"), t("rank")]];
+      if (result) {
+        tableData.push([
+          result.totalMarks.toFixed(2),
+          result.average.toFixed(2),
+          result.rank.toString()
+        ]);
+      }
+    } else if (selectedResultView === "secondTerm") {
+      result = secondTermResults.find((r) => r.student === student);
+      columns = [[t("total_marks"), t("average"), t("rank")]];
+      if (result) {
+        tableData.push([
+          result.totalMarks.toFixed(2),
+          result.average.toFixed(2),
+          result.rank.toString()
+        ]);
+      }
+    } else if (selectedResultView === "thirdTerm") {
+      result = thirdTermResults.find((r) => r.student === student);
+      columns = [[t("total_marks"), t("average"), t("rank")]];
+      if (result) {
+        tableData.push([
+          result.totalMarks.toFixed(2),
+          result.average.toFixed(2),
+          result.rank.toString()
+        ]);
+      }
+    } else if (selectedResultView === "annual") {
+      result = annualResults.find((r) => r.student === student);
+      columns = [[t("first_term_avg"), t("second_term_avg"), t("third_term_avg"), t("final_avg"), t("rank")]];
+      if (result) {
+        tableData.push([
+          result.firstTermAverage.toFixed(2),
+          result.secondTermAverage.toFixed(2),
+          result.thirdTermAverage.toFixed(2),
+          result.finalAverage.toFixed(2),
+          result.rank.toString()
+        ]);
+      }
+    }
+
+    if (tableData.length > 0) {
+      autoTable(doc, {
+        startY: 45,
+        head: columns,
+        body: tableData,
+      });
+    }
+  }
+
+  const finalY = (doc as any).lastAutoTable.finalY || 45;
+  const comment = studentComments[studentIndex]?.[selectedSequence] || t("no_comment");
+  
+  doc.setFontSize(12);
+  doc.text(t("teacher_comment"), 20, finalY + 10);
+  doc.text(comment, 20, finalY + 20);
+
+  doc.save(`${student}_${selectedResultView}_report.pdf`);
+};
+
+export const generateResultsPDF = (
+  title: string,
+  results: SequenceResult[] | TermResult[] | AnnualResult[],
+  classAvg: number,
+  passPerc: number,
+  isAnnual: boolean,
+  t: (key: string, options?: any) => string
+) => {
+  const doc = new jsPDF();
+  const currentDate = new Date().toLocaleDateString();
+  
+  // Add BrainBoard header
+  doc.setFontSize(20);
+  doc.setTextColor(25, 118, 210); // blue color #1976d2
+  doc.text("Brain", 20, 15);
+  doc.setTextColor(46, 125, 50); // green color #2e7d32
+  doc.text("Board", 47, 15);
+
+  // Add date
+  doc.setFontSize(10);
+  doc.setTextColor(128, 128, 128); // gray color
+  doc.text(`Generated on: ${currentDate}`, 20, 25);
+  
+  doc.setFontSize(16);
+  doc.setTextColor(0, 0, 0); // Reset to black
+  doc.text(`${title}`, 20, 35);
+  
+  const tableHead = isAnnual
+    ? [
+        [
+          t("rank"),
+          t("student"),
+          t("first_term_avg"),
+          t("second_term_avg"),
+          t("third_term_avg"),
+          t("final_avg"),
+        ],
+      ]
+    : [[t("rank"), t("student"), t("total_marks"), t("average")]];
+  
+  const tableData = isAnnual
+    ? (results as AnnualResult[]).map((result) => [
+        result.rank.toString(),
+        result.student,
+        result.firstTermAverage.toFixed(2),
+        result.secondTermAverage.toFixed(2),
+        result.thirdTermAverage.toFixed(2),
+        result.finalAverage.toFixed(2),
+      ])
+    : (results as (SequenceResult | TermResult)[]).map((result) => [
+        result.rank.toString(),
+        result.student,
+        result.totalMarks.toFixed(2),
+        result.average.toFixed(2),
+      ]);
+
+  autoTable(doc, {
+    startY: 45,
+    head: tableHead,
+    body: tableData,
+  });
+
+  const finalY = (doc as any).lastAutoTable.finalY || 45;
+  doc.text(t("class_average", { value: classAvg.toFixed(2) }), 20, finalY + 10);
+  doc.text(
+    t("pass_percentage", { value: passPerc.toFixed(2) }),
+    20,
+    finalY + 20
+  );
+
+  doc.save(`${title.toLowerCase().replace(" ", "-")}.pdf`);
+};
+
+
+
+here we have src/locals files:
+en.json:
+{
+  "app_title": "Student Result Management System",
+  "language": "Language",
+  "english": "English",
+  "french": "French",
+  "students": "Students",
+  "subjects": "Subjects",
+  "reset_data": "Reset Data",
+  "enter_marks_comments": "Enter Marks & Comments",
+  "sequence": "Sequence",
+  "first_sequence": "First Sequence",
+  "second_sequence": "Second Sequence",
+  "third_sequence": "Third Sequence",
+  "fourth_sequence": "Fourth Sequence",
+  "fifth_sequence": "Fifth Sequence",
+  "sixth_sequence": "Sixth Sequence",
+  "student": "Student",
+  "comment": "Comment",
+  "enter_comment": "Enter comment",
+  "calculate_results": "Calculate Results",
+  "term_results": "Term Results",
+  "student_reports": "Student Reports",
+  "bulk_marks_entry": "Bulk Marks Entry",
+  "results": "Results",
+  "result_view": "Result View",
+  "rank": "Rank",
+  "total_marks": "Total Marks",
+  "average": "Average",
+  "first_term": "First Term",
+  "second_term": "Second Term",
+  "third_term": "Third Term",
+  "annual_summary": "Annual Summary",
+  "first_term_avg": "First Term Avg",
+  "second_term_avg": "Second Term Avg",
+  "third_term_avg": "Third Term Avg",
+  "final_avg": "Final Average",
+  "class_average": "Class Average: {{value}}",
+  "pass_percentage": "Pass Percentage: {{value}}%",
+  "download_pdf": "Download PDF",
+  "student_list": "Student List",
+  "name": "Name",
+  "actions": "Actions",
+  "enter_student_name": "Enter student name",
+  "subject_list": "Subject List",
+  "subject_name": "Subject Name",
+  "total_score": "Total Score",
+  "total": "Total",
+  "enter_subject_name": "Enter subject name",
+  "generate_student_reports": "Generate Student Reports",
+  "select_student": "Select Student",
+  "generate_report": "Generate Report",
+  "generate_all_reports": "Generate All Reports",
+  "confirm_reset": "Are you sure you want to reset all data? This cannot be undone.",
+  "no_comment": "No comment provided",
+  "no_progress_note": "No progress notes available",
+  "progress_notes": "Progress Notes",
+  "term_summary": "Term Summary",
+  "period": "Period",
+  "teacher_comment": "Teacher's Comment",
+  "mark": "Mark"
+}
+
+
+fr.json:
+
+{
+  "app_title": "Système de Gestion des Résultats des Élèves",
+  "language": "Langue",
+  "english": "Anglais",
+  "french": "Français",
+  "students": "Élèves",
+  "subjects": "Matières",
+  "reset_data": "Réinitialiser",
+  "enter_marks_comments": "Entrer Notes & Commentaires",
+  "sequence": "Séquence",
+  "first_sequence": "Première Séquence",
+  "second_sequence": "Deuxième Séquence",
+  "third_sequence": "Troisième Séquence",
+  "fourth_sequence": "Quatrième Séquence",
+  "fifth_sequence": "Cinquième Séquence",
+  "sixth_sequence": "Sixième Séquence",
+  "student": "Élève",
+  "comment": "Commentaire",
+  "enter_comment": "Entrer commentaire",
+  "calculate_results": "Calculer Résultats",
+  "term_results": "Résultats du Trimestre",
+  "student_reports": "Bulletins des Élèves",
+  "bulk_marks_entry": "Entrée en Masse",
+  "results": "Résultats",
+  "result_view": "Vue des Résultats",
+  "rank": "Rang",
+  "total_marks": "Total Points",
+  "average": "Moyenne",
+  "first_term": "Premier Trimestre",
+  "second_term": "Deuxième Trimestre",
+  "third_term": "Troisième Trimestre",
+  "annual_summary": "Récapitulatif Annuel",
+  "first_term_avg": "Moy. 1er Trim.",
+  "second_term_avg": "Moy. 2e Trim.",
+  "third_term_avg": "Moy. 3e Trim.",
+  "final_avg": "Moyenne Finale",
+  "class_average": "Moyenne de la Classe: {{value}}",
+  "pass_percentage": "Pourcentage de Réussite: {{value}}%",
+  "download_pdf": "Télécharger PDF",
+  "student_list": "Liste des Élèves",
+  "name": "Nom",
+  "actions": "Actions",
+  "enter_student_name": "Entrer nom de l'élève",
+  "subject_list": "Liste des Matières",
+  "subject_name": "Nom de la Matière",
+  "total_score": "Total des Points",
+  "total": "Total",
+  "enter_subject_name": "Entrer nom de la matière",
+  "generate_student_reports": "Générer les Bulletins",
+  "select_student": "Sélectionner un Élève",
+  "generate_report": "Générer Bulletin",
+  "generate_all_reports": "Générer Tous les Bulletins",
+  "confirm_reset": "Êtes-vous sûr de vouloir réinitialiser toutes les données? Cette action est irréversible.",
+  "no_comment": "Aucun commentaire fourni",
+  "no_progress_note": "Aucune note de progression disponible",
+  "progress_notes": "Notes de Progression",
+  "term_summary": "Résumé du Trimestre",
+  "period": "Période",
+  "teacher_comment": "Commentaire du Professeur",
+  "mark": "Note"
+}
+
+
+here we have src/components files: 
+
+import React, { useState, useEffect } from "react";
+import {
+  Modal,
+  Box,
+  Typography,
+  IconButton,
+  Button,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TextField,
+} from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
+import SaveIcon from "@mui/icons-material/Save";
+import { useTranslation } from "react-i18next";
+import { Subject } from "../types";
+
+interface BulkMarksEntryProps {
+  open: boolean;
+  onClose: () => void;
+  students: string[];
+  subjects: Subject[];
+  selectedSequence: string;
+  onSave: (
+    studentIndex: number,
+    subjectName: string,
+    mark: string,
+    maxTotal: number
+  ) => void;
+}
+
+const BulkMarksEntry: React.FC<BulkMarksEntryProps> = ({
+  open,
+  onClose,
+  students,
+  subjects,
+  selectedSequence,
+  onSave,
+}) => {
+  const { t } = useTranslation();
+  const [selectedSubject, setSelectedSubject] = useState<string>("");
+  const [marks, setMarks] = useState<(number | "")[]>([]);
+
+  useEffect(() => {
+    // Initialize marks array with empty values for each student
+    setMarks(Array(students.length).fill(""));
+  }, [students, open]);
+
+  const handleMarkChange = (index: number, value: string) => {
+    const newMarks = [...marks];
+    const numValue = value === "" ? "" : Number(value);
+    
+    const subject = subjects.find(s => s.name === selectedSubject);
+    const maxTotal = subject ? subject.total : 100;
+    
+    if (numValue === "" || (typeof numValue === "number" && numValue >= 0 && numValue <= maxTotal)) {
+      newMarks[index] = numValue;
+      setMarks(newMarks);
+    }
+  };
+
+  const handleSaveAll = () => {
+    if (!selectedSubject) return;
+    
+    const subject = subjects.find(s => s.name === selectedSubject);
+    if (!subject) return;
+    
+    marks.forEach((mark, index) => {
+      onSave(index, selectedSubject, mark.toString(), subject.total);
+    });
+    
+    onClose();
+  };
+
+  const modalStyle = {
+    position: "absolute" as const,
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    width: { xs: "90%", sm: "80%", md: 600 },
+    maxWidth: "100%",
+    bgcolor: "background.paper",
+    boxShadow: 24,
+    p: { xs: 2, sm: 4 },
+    borderRadius: 2,
+    maxHeight: "80vh",
+    overflowY: "auto" as const,
+  };
+
+  return (
+    <Modal open={open} onClose={onClose}>
+      <Box sx={modalStyle}>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 2,
+          }}
+        >
+          <Typography
+            variant="h6"
+            sx={{ fontSize: { xs: "1rem", sm: "1.25rem" } }}
+          >
+            {t("bulk_marks_entry")} - {t(selectedSequence)}
+          </Typography>
+          <IconButton onClick={onClose}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+        
+        <FormControl fullWidth sx={{ mb: 2 }}>
+          <InputLabel id="subject-select-label">
+            {t("subject_name")}
+          </InputLabel>
+          <Select
+            labelId="subject-select-label"
+            value={selectedSubject}
+            label={t("subject_name")}
+            onChange={(e) => setSelectedSubject(e.target.value as string)}
+            size="small"
+          >
+            {subjects.map((subject) => (
+              <MenuItem key={subject.name} value={subject.name}>
+                {subject.name} (/{subject.total})
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        
+        {selectedSubject && (
+          <>
+            <Box sx={{ overflowX: "auto", mt: 2 }}>
+              <Table
+                sx={{
+                  "& th, & td": {
+                    padding: { xs: "4px", sm: "8px" },
+                    fontSize: { xs: "0.75rem", sm: "0.875rem" },
+                  },
+                }}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ fontWeight: "bold" }}>{t("student")}</TableCell>
+                    <TableCell sx={{ fontWeight: "bold" }}>
+                      {t("mark")} (/{subjects.find(s => s.name === selectedSubject)?.total})
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {students.map((student, index) => (
+                    <TableRow key={index}>
+                      <TableCell>{student}</TableCell>
+                      <TableCell>
+                        <TextField
+                          type="number"
+                          size="small"
+                          value={marks[index]}
+                          onChange={(e) => handleMarkChange(index, e.target.value)}
+                          inputProps={{
+                            min: 0,
+                            max: subjects.find(s => s.name === selectedSubject)?.total,
+                            step: "0.01",
+                          }}
+                          sx={{ width: { xs: "80px", sm: "100px" } }}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+            
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={handleSaveAll}
+              startIcon={<SaveIcon />}
+              sx={{ mt: 2 }}
+            >
+              {t("save_all")}
+            </Button>
+          </>
+        )}
+      </Box>
+    </Modal>
+  );
+};
+
+export default BulkMarksEntry;
+
+
+
+import React from "react";
+import {
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TextField,
+  Box,
+} from "@mui/material";
+import { useTranslation } from "react-i18next";
+import { Subject, StudentMarks } from "../types";
+
+interface MarksTableProps {
+  students: string[];
+  subjects: Subject[];
+  marks: StudentMarks[];
+  selectedSequence: keyof StudentMarks;
+  studentComments: {
+    [studentIndex: number]: { [sequence: string]: string };
+  };
+  onMarkChange: (
+    studentIndex: number,
+    subject: string,
+    value: string,
+    maxTotal: number
+  ) => void;
+  onCommentChange: (
+    studentIndex: number,
+    sequence: string,
+    comment: string
+  ) => void;
+}
+
+const MarksTable: React.FC<MarksTableProps> = ({
+  students,
+  subjects,
+  marks,
+  selectedSequence,
+  studentComments,
+  onMarkChange,
+  onCommentChange,
+}) => {
+  const { t } = useTranslation();
+
+  return (
+    <Box sx={{ overflowX: "auto" }}>
+      <Table
+        sx={{
+          bgcolor: "white",
+          borderCollapse: "separate",
+          borderSpacing: 0,
+          "& th, & td": {
+            borderBottom: "1px solid #e0e0e0",
+            padding: { xs: "4px", sm: "8px" },
+            fontSize: { xs: "0.75rem", sm: "0.875rem" },
+          },
+        }}
+      >
+        <TableHead>
+          <TableRow>
+            <TableCell
+              sx={{
+                fontWeight: "bold",
+                minWidth: { xs: 100, sm: 150 },
+                position: "sticky",
+                left: 0,
+                bgcolor: "white",
+                zIndex: 1,
+              }}
+            >
+              {t("student")}
+            </TableCell>
+            {subjects.map((subject) => (
+              <TableCell
+                key={subject.name}
+                sx={{
+                  fontWeight: "bold",
+                  minWidth: { xs: 80, sm: 120 },
+                }}
+              >
+                {subject.name} (/{subject.total})
+              </TableCell>
+            ))}
+            <TableCell
+              sx={{
+                fontWeight: "bold",
+                minWidth: { xs: 150, sm: 200 },
+              }}
+            >
+              {t("comment")}
+            </TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {students.map((student, studentIndex) => (
+            <TableRow key={student}>
+              <TableCell
+                sx={{
+                  verticalAlign: "middle",
+                  position: "sticky",
+                  left: 0,
+                  bgcolor: "white",
+                  zIndex: 1,
+                }}
+              >
+                {student}
+              </TableCell>
+              {subjects.map((subject) => {
+                const mark =
+                  marks[studentIndex]?.[selectedSequence]?.[subject.name] ?? "";
+                const markValue = typeof mark === "number" ? mark : 0;
+                const isBelowAverage = markValue < subject.total / 2;
+                return (
+                  <TableCell key={subject.name}>
+                    <TextField
+                      type="number"
+                      size="small"
+                      value={mark}
+                      onChange={(e) =>
+                        onMarkChange(
+                          studentIndex,
+                          subject.name,
+                          e.target.value,
+                          subject.total
+                        )
+                      }
+                      inputProps={{
+                        min: 0,
+                        max: subject.total,
+                        step: "0.01",
+                      }}
+                      sx={{
+                        width: { xs: "50px", sm: "80px" },
+                        "& .MuiInputBase-input": {
+                          color: isBelowAverage ? "red" : "inherit",
+                          fontSize: { xs: "0.75rem", sm: "0.875rem" },
+                        },
+                        "& .MuiOutlinedInput-root": {
+                          "& fieldset": {
+                            borderColor: isBelowAverage ? "red" : "inherit",
+                          },
+                          "&:hover fieldset": {
+                            borderColor: isBelowAverage ? "red" : "inherit",
+                          },
+                          "&.Mui-focused fieldset": {
+                            borderColor: isBelowAverage
+                              ? "red"
+                              : "primary.main",
+                          },
+                        },
+                      }}
+                    />
+                  </TableCell>
+                );
+              })}
+              <TableCell>
+                <TextField
+                  size="small"
+                  value={
+                    studentComments[studentIndex]?.[selectedSequence] || ""
+                  }
+                  onChange={(e) =>
+                    onCommentChange(
+                      studentIndex,
+                      selectedSequence,
+                      e.target.value
+                    )
+                  }
+                  placeholder={t("enter_comment")}
+                  sx={{ width: { xs: "120px", sm: "180px" } }}
+                />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Box>
+  );
+};
+
+export default MarksTable;
+
+
+import React, { useState } from "react";
+import {
+  Modal,
+  Box,
+  Typography,
+  IconButton,
+  Button,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+} from "@mui/material";
+import CloseIcon from "@mui/icons-material/Close";
+import { useTranslation } from "react-i18next";
+
+interface ReportModalProps {
+  open: boolean;
+  onClose: () => void;
+  students: string[];
+  onGenerateReport: (studentIndex: number) => void;
+  onGenerateAllReports: () => void;
+  selectedSequence: string;
+  selectedResultView: string;
+}
+
+const ReportModal: React.FC<ReportModalProps> = ({
+  open,
+  onClose,
+  students,
+  onGenerateReport,
+  onGenerateAllReports,
+  selectedSequence,
+  selectedResultView,
+}) => {
+  const { t } = useTranslation();
+  const [selectedStudentIndex, setSelectedStudentIndex] = useState<
+    number | null
+  >(null);
+
+  const handleGenerateReport = () => {
+    if (selectedStudentIndex !== null) {
+      onGenerateReport(selectedStudentIndex);
+      onClose();
+      setSelectedStudentIndex(null);
+    }
+  };
+
+  const handleGenerateAllReports = () => {
+    onGenerateAllReports();
+    onClose();
+    setSelectedStudentIndex(null);
+  };
+
+  const modalStyle = {
+    position: "absolute" as const,
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    width: { xs: "90%", sm: "80%", md: 600 },
+    maxWidth: "100%",
+    bgcolor: "background.paper",
+    boxShadow: 24,
+    p: { xs: 2, sm: 4 },
+    borderRadius: 2,
+    maxHeight: "80vh",
+    overflowY: "auto" as const,
+  };
+
+  return (
+    <Modal open={open} onClose={onClose}>
+      <Box sx={modalStyle}>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 2,
+          }}
+        >
+          <Typography
+            variant="h6"
+            sx={{ fontSize: { xs: "1rem", sm: "1.25rem" } }}
+          >
+            {t("generate_student_reports")} - {t(selectedSequence)} ({t(selectedResultView)})
+          </Typography>
+          <IconButton onClick={onClose}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+        <FormControl fullWidth sx={{ mb: 2 }}>
+          <InputLabel id="student-select-label">
+            {t("select_student")}
+          </InputLabel>
+          <Select
+            labelId="student-select-label"
+            value={selectedStudentIndex !== null ? selectedStudentIndex : ""}
+            label={t("select_student")}
+            onChange={(e) => setSelectedStudentIndex(Number(e.target.value))}
+          >
+            {students.map((student, index) => (
+              <MenuItem key={index} value={index}>
+                {student}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleGenerateReport}
+            disabled={selectedStudentIndex === null}
+          >
+            {t("generate_report")}
+          </Button>
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={handleGenerateAllReports}
+          >
+            {t("generate_all_reports")}
+          </Button>
+        </Box>
+      </Box>
+    </Modal>
+  );
+};
+
+export default ReportModal;
+
+
+
+import React from "react";
+import {
+  Typography,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Box,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  Button,
+} from "@mui/material";
+import { useTranslation } from "react-i18next";
+import { SequenceResult, TermResult, AnnualResult } from "../types";
+
+interface ResultsTableProps {
+  selectedResultView: "sequence" | "firstTerm" | "secondTerm" | "thirdTerm" | "annual";
+  onResultViewChange: (
+    view: "sequence" | "firstTerm" | "secondTerm" | "thirdTerm" | "annual"
+  ) => void;
+  sequenceResults: SequenceResult[];
+  firstTermResults: TermResult[];
+  secondTermResults: TermResult[];
+  thirdTermResults: TermResult[];
+  annualResults: AnnualResult[];
+  sequenceClassAverage: number | null;
+  firstTermClassAverage: number | null;
+  secondTermClassAverage: number | null;
+  thirdTermClassAverage: number | null;
+  annualClassAverage: number | null;
+  sequencePassPercentage: number | null;
+  firstTermPassPercentage: number | null;
+  secondTermPassPercentage: number | null;
+  thirdTermPassPercentage: number | null;
+  annualPassPercentage: number | null;
+  passingMark: number;
+  onDownloadPDF: () => void;
+  isDownloadDisabled: boolean;
+}
+
+const ResultsTable: React.FC<ResultsTableProps> = ({
+  selectedResultView,
+  onResultViewChange,
+  sequenceResults,
+  firstTermResults,
+  secondTermResults,
+  thirdTermResults,
+  annualResults,
+  sequenceClassAverage,
+  firstTermClassAverage,
+  secondTermClassAverage,
+  thirdTermClassAverage,
+  annualClassAverage,
+  sequencePassPercentage,
+  firstTermPassPercentage,
+  secondTermPassPercentage,
+  thirdTermPassPercentage,
+  annualPassPercentage,
+  passingMark,
+  onDownloadPDF,
+  isDownloadDisabled,
+}) => {
+  const { t } = useTranslation();
+
+  return (
+    <>
+      <Typography
+        variant="h6"
+        gutterBottom
+        sx={{ fontSize: { xs: "1rem", sm: "1.25rem" } }}
+      >
+        {t("results")}
+      </Typography>
+      <FormControl sx={{ mb: 2, minWidth: 200 }}>
+        <InputLabel id="result-view-select-label">
+          {t("result_view")}
+        </InputLabel>
+        <Select
+          labelId="result-view-select-label"
+          value={selectedResultView}
+          label={t("result_view")}
+          onChange={(e) =>
+            onResultViewChange(
+              e.target.value as
+                | "sequence"
+                | "firstTerm"
+                | "secondTerm"
+                | "thirdTerm"
+                | "annual"
+            )
+          }
+          size="small"
+        >
+          <MenuItem value="sequence">{t("sequence")}</MenuItem>
+          <MenuItem value="firstTerm">{t("first_term")}</MenuItem>
+          <MenuItem value="secondTerm">{t("second_term")}</MenuItem>
+          <MenuItem value="thirdTerm">{t("third_term")}</MenuItem>
+          <MenuItem value="annual">{t("annual_summary")}</MenuItem>
+        </Select>
+      </FormControl>
+      <Box sx={{ overflowX: "auto" }}>
+        <Table
+          sx={{
+            bgcolor: "white",
+            borderCollapse: "separate",
+            borderSpacing: 0,
+            "& th, & td": {
+              borderBottom: "1px solid #e0e0e0",
+              padding: { xs: "4px", sm: "8px" },
+              fontSize: { xs: "0.75rem", sm: "0.875rem" },
+            },
+          }}
+        >
+          <TableHead>
+            <TableRow>
+              <TableCell
+                sx={{
+                  fontWeight: "bold",
+                  minWidth: { xs: 40, sm: 60 },
+                }}
+              >
+                {t("rank")}
+              </TableCell>
+              <TableCell
+                sx={{
+                  fontWeight: "bold",
+                  minWidth: { xs: 100, sm: 150 },
+                  position: "sticky",
+                  left: 0,
+                  bgcolor: "white",
+                  zIndex: 1,
+                }}
+              >
+                {t("student")}
+              </TableCell>
+              {selectedResultView === "annual" ? (
+                <>
+                  <TableCell
+                    sx={{
+                      fontWeight: "bold",
+                      minWidth: { xs: 80, sm: 120 },
+                    }}
+                  >
+                    {t("first_term_avg")}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontWeight: "bold",
+                      minWidth: { xs: 80, sm: 120 },
+                    }}
+                  >
+                    {t("second_term_avg")}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontWeight: "bold",
+                      minWidth: { xs: 80, sm: 120 },
+                    }}
+                  >
+                    {t("third_term_avg")}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontWeight: "bold",
+                      minWidth: { xs: 80, sm: 120 },
+                    }}
+                  >
+                    {t("final_avg")}
+                  </TableCell>
+                </>
+              ) : (
+                <>
+                  <TableCell
+                    sx={{
+                      fontWeight: "bold",
+                      minWidth: { xs: 80, sm: 120 },
+                    }}
+                  >
+                    {t("total_marks")}
+                  </TableCell>
+                  <TableCell
+                    sx={{
+                      fontWeight: "bold",
+                      minWidth: { xs: 80, sm: 120 },
+                    }}
+                  >
+                    {t("average")}
+                  </TableCell>
+                </>
+              )}
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {selectedResultView === "sequence" &&
+              sequenceResults.map((result) => (
+                <TableRow key={result.student}>
+                  <TableCell>{result.rank}</TableCell>
+                  <TableCell
+                    sx={{
+                      position: "sticky",
+                      left: 0,
+                      bgcolor: "white",
+                      zIndex: 1,
+                    }}
+                  >
+                    {result.student}
+                  </TableCell>
+                  <TableCell>{result.totalMarks.toFixed(2)}</TableCell>
+                  <TableCell
+                    sx={{
+                      color:
+                        result.average < passingMark ? "red" : "inherit",
+                    }}
+                  >
+                    {result.average.toFixed(2)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            {selectedResultView === "firstTerm" &&
+              firstTermResults.map((result) => (
+                <TableRow key={result.student}>
+                  <TableCell>{result.rank}</TableCell>
+                  <TableCell
+                    sx={{
+                      position: "sticky",
+                      left: 0,
+                      bgcolor: "white",
+                      zIndex: 1,
+                    }}
+                  >
+                    {result.student}
+                  </TableCell>
+                  <TableCell>{result.totalMarks.toFixed(2)}</TableCell>
+                  <TableCell
+                    sx={{
+                      color:
+                        result.average < passingMark ? "red" : "inherit",
+                    }}
+                  >
+                    {result.average.toFixed(2)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            {selectedResultView === "secondTerm" &&
+              secondTermResults.map((result) => (
+                <TableRow key={result.student}>
+                  <TableCell>{result.rank}</TableCell>
+                  <TableCell
+                    sx={{
+                      position: "sticky",
+                      left: 0,
+                      bgcolor: "white",
+                      zIndex: 1,
+                    }}
+                  >
+                    {result.student}
+                  </TableCell>
+                  <TableCell>{result.totalMarks.toFixed(2)}</TableCell>
+                  <TableCell
+                    sx={{
+                      color:
+                        result.average < passingMark ? "red" : "inherit",
+                    }}
+                  >
+                    {result.average.toFixed(2)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            {selectedResultView === "thirdTerm" &&
+              thirdTermResults.map((result) => (
+                <TableRow key={result.student}>
+                  <TableCell>{result.rank}</TableCell>
+                  <TableCell
+                    sx={{
+                      position: "sticky",
+                      left: 0,
+                      bgcolor: "white",
+                      zIndex: 1,
+                    }}
+                  >
+                    {result.student}
+                  </TableCell>
+                  <TableCell>{result.totalMarks.toFixed(2)}</TableCell>
+                  <TableCell
+                    sx={{
+                      color:
+                        result.average < passingMark ? "red" : "inherit",
+                    }}
+                  >
+                    {result.average.toFixed(2)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            {selectedResultView === "annual" &&
+              annualResults.map((result) => (
+                <TableRow key={result.student}>
+                  <TableCell>{result.rank}</TableCell>
+                  <TableCell
+                    sx={{
+                      position: "sticky",
+                      left: 0,
+                      bgcolor: "white",
+                      zIndex: 1,
+                    }}
+                  >
+                    {result.student}
+                  </TableCell>
+                  <TableCell>{result.firstTermAverage.toFixed(2)}</TableCell>
+                  <TableCell>{result.secondTermAverage.toFixed(2)}</TableCell>
+                  <TableCell>{result.thirdTermAverage.toFixed(2)}</TableCell>
+                  <TableCell
+                    sx={{
+                      color:
+                        result.finalAverage < passingMark
+                          ? "red"
+                          : "inherit",
+                    }}
+                  >
+                    {result.finalAverage.toFixed(2)}
+                  </TableCell>
+                </TableRow>
+              ))}
+          </TableBody>
+        </Table>
+      </Box>
+      <Typography
+        variant="body1"
+        sx={{ mt: 2, fontSize: { xs: "0.75rem", sm: "1rem" } }}
+      >
+        {t("class_average", {
+          value:
+            selectedResultView === "sequence"
+              ? sequenceClassAverage?.toFixed(2)
+              : selectedResultView === "firstTerm"
+              ? firstTermClassAverage?.toFixed(2)
+              : selectedResultView === "secondTerm"
+              ? secondTermClassAverage?.toFixed(2)
+              : selectedResultView === "thirdTerm"
+              ? thirdTermClassAverage?.toFixed(2)
+              : annualClassAverage?.toFixed(2),
+        })}
+      </Typography>
+      <Typography
+        variant="body1"
+        sx={{ fontSize: { xs: "0.75rem", sm: "1rem" } }}
+      >
+        {t("pass_percentage", {
+          value:
+            selectedResultView === "sequence"
+              ? sequencePassPercentage?.toFixed(2)
+              : selectedResultView === "firstTerm"
+              ? firstTermPassPercentage?.toFixed(2)
+              : selectedResultView === "secondTerm"
+              ? secondTermPassPercentage?.toFixed(2)
+              : selectedResultView === "thirdTerm"
+              ? thirdTermPassPercentage?.toFixed(2)
+              : annualPassPercentage?.toFixed(2),
+        })}
+      </Typography>
+      <Button
+        variant="contained"
+        color="primary"
+        onClick={onDownloadPDF}
+        sx={{ mt: 2, minWidth: { xs: 100, sm: 120 } }}
+        disabled={isDownloadDisabled}
+      >
+        {t("download_pdf")}
+      </Button>
+    </>
+  );
+};
+
+export default ResultsTable;
+
+
+
+import React, { useState } from "react";
+import {
+  Modal,
+  Box,
+  Typography,
+  IconButton,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TextField,
+} from "@mui/material";
+import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
+import DeleteIcon from "@mui/icons-material/Delete";
+import SaveIcon from "@mui/icons-material/Save";
+import CloseIcon from "@mui/icons-material/Close";
+import { useTranslation } from "react-i18next";
+
+interface StudentModalProps {
+  open: boolean;
+  onClose: () => void;
+  students: string[];
+  onAddStudent: (name: string) => void;
+  onEditStudent: (index: number, name: string) => void;
+  onDeleteStudent: (index: number) => void;
+}
+
+const StudentModal: React.FC<StudentModalProps> = ({
+  open,
+  onClose,
+  students,
+  onAddStudent,
+  onEditStudent,
+  onDeleteStudent,
+}) => {
+  const { t } = useTranslation();
+  const [newStudentName, setNewStudentName] = useState<string>("");
+  const [editStudentIndex, setEditStudentIndex] = useState<number | null>(null);
+  const [editStudentValue, setEditStudentValue] = useState<string>("");
+
+  const handleAddStudent = () => {
+    if (newStudentName.trim() === "") return;
+    onAddStudent(newStudentName.trim());
+    setNewStudentName("");
+  };
+
+  const handleEditStudent = (index: number) => {
+    setEditStudentIndex(index);
+    setEditStudentValue(students[index]);
+  };
+
+  const handleSaveStudentEdit = () => {
+    if (editStudentIndex === null || editStudentValue.trim() === "") return;
+    onEditStudent(editStudentIndex, editStudentValue.trim());
+    setEditStudentIndex(null);
+    setEditStudentValue("");
+  };
+
+  const modalStyle = {
+    position: "absolute" as const,
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    width: { xs: "90%", sm: "80%", md: 600 },
+    maxWidth: "100%",
+    bgcolor: "background.paper",
+    boxShadow: 24,
+    p: { xs: 2, sm: 4 },
+    borderRadius: 2,
+    maxHeight: "80vh",
+    overflowY: "auto" as const,
+  };
+
+  return (
+    <Modal open={open} onClose={onClose}>
+      <Box sx={modalStyle}>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 2,
+          }}
+        >
+          <Typography
+            variant="h6"
+            sx={{ fontSize: { xs: "1rem", sm: "1.25rem" } }}
+          >
+            {t("student_list")}
+          </Typography>
+          <IconButton onClick={onClose}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+        <Table
+          sx={{
+            "& th, & td": {
+              padding: { xs: "4px", sm: "8px" },
+              fontSize: { xs: "0.75rem", sm: "0.875rem" },
+            },
+          }}
+        >
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ fontWeight: "bold" }}>{t("name")}</TableCell>
+              <TableCell sx={{ fontWeight: "bold" }}>{t("actions")}</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {students.map((student, index) => (
+              <TableRow key={index}>
+                <TableCell>
+                  {editStudentIndex === index ? (
+                    <TextField
+                      value={editStudentValue}
+                      onChange={(e) => setEditStudentValue(e.target.value)}
+                      size="small"
+                      onBlur={handleSaveStudentEdit}
+                      onKeyPress={(e) => {
+                        if (e.key === "Enter") handleSaveStudentEdit();
+                      }}
+                      autoFocus
+                      sx={{ width: { xs: "100%", sm: "200px" } }}
+                    />
+                  ) : (
+                    student
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: "flex", gap: 1 }}>
+                    {editStudentIndex === index ? (
+                      <IconButton onClick={handleSaveStudentEdit}>
+                        <SaveIcon color="success" fontSize="small" />
+                      </IconButton>
+                    ) : (
+                      <IconButton onClick={() => handleEditStudent(index)}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    )}
+                    <IconButton onClick={() => onDeleteStudent(index)}>
+                      <DeleteIcon color="error" fontSize="small" />
+                    </IconButton>
+                  </Box>
+                </TableCell>
+              </TableRow>
+            ))}
+            <TableRow>
+              <TableCell>
+                <TextField
+                  value={newStudentName}
+                  onChange={(e) => setNewStudentName(e.target.value)}
+                  placeholder={t("enter_student_name")}
+                  size="small"
+                  sx={{ width: { xs: "100%", sm: "200px" } }}
+                  onKeyPress={(e) => {
+                    if (e.key === "Enter") handleAddStudent();
+                  }}
+                />
+              </TableCell>
+              <TableCell>
+                <IconButton
+                  onClick={handleAddStudent}
+                  disabled={newStudentName.trim() === ""}
+                >
+                  <AddIcon color="primary" fontSize="small" />
+                </IconButton>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Box>
+    </Modal>
+  );
+};
+
+export default StudentModal;
+
+
+import React, { useState } from "react";
+import {
+  Modal,
+  Box,
+  Typography,
+  IconButton,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  TextField,
+} from "@mui/material";
+import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
+import DeleteIcon from "@mui/icons-material/Delete";
+import SaveIcon from "@mui/icons-material/Save";
+import CloseIcon from "@mui/icons-material/Close";
+import { useTranslation } from "react-i18next";
+import { Subject } from "../types";
+
+interface SubjectModalProps {
+  open: boolean;
+  onClose: () => void;
+  subjects: Subject[];
+  onAddSubject: (name: string, total: number) => void;
+  onEditSubject: (index: number, name: string, total: number) => void;
+  onDeleteSubject: (index: number) => void;
+}
+
+const SubjectModal: React.FC<SubjectModalProps> = ({
+  open,
+  onClose,
+  subjects,
+  onAddSubject,
+  onEditSubject,
+  onDeleteSubject,
+}) => {
+  const { t } = useTranslation();
+  const [newSubjectName, setNewSubjectName] = useState<string>("");
+  const [newSubjectTotal, setNewSubjectTotal] = useState<string>("");
+  const [editSubjectIndex, setEditSubjectIndex] = useState<number | null>(null);
+  const [editSubjectValue, setEditSubjectValue] = useState<Subject>({
+    name: "",
+    total: 0,
+  });
+
+  const handleAddSubject = () => {
+    const total = parseInt(newSubjectTotal, 10);
+    if (newSubjectName.trim() === "" || isNaN(total) || total <= 0) return;
+    onAddSubject(newSubjectName.trim(), total);
+    setNewSubjectName("");
+    setNewSubjectTotal("");
+  };
+
+  const handleEditSubject = (index: number) => {
+    setEditSubjectIndex(index);
+    setEditSubjectValue(subjects[index]);
+  };
+
+  const handleSaveSubjectEdit = () => {
+    if (
+      editSubjectIndex === null ||
+      editSubjectValue.name.trim() === "" ||
+      editSubjectValue.total <= 0
+    )
+      return;
+    onEditSubject(
+      editSubjectIndex,
+      editSubjectValue.name.trim(),
+      editSubjectValue.total
+    );
+    setEditSubjectIndex(null);
+    setEditSubjectValue({ name: "", total: 0 });
+  };
+
+  const modalStyle = {
+    position: "absolute" as const,
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+    width: { xs: "90%", sm: "80%", md: 600 },
+    maxWidth: "100%",
+    bgcolor: "background.paper",
+    boxShadow: 24,
+    p: { xs: 2, sm: 4 },
+    borderRadius: 2,
+    maxHeight: "80vh",
+    overflowY: "auto" as const,
+  };
+
+  return (
+    <Modal open={open} onClose={onClose}>
+      <Box sx={modalStyle}>
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            mb: 2,
+          }}
+        >
+          <Typography
+            variant="h6"
+            sx={{ fontSize: { xs: "1rem", sm: "1.25rem" } }}
+          >
+            {t("subject_list")}
+          </Typography>
+          <IconButton onClick={onClose}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+        <Table
+          sx={{
+            "& th, & td": {
+              padding: { xs: "4px", sm: "8px" },
+              fontSize: { xs: "0.75rem", sm: "0.875rem" },
+            },
+          }}
+        >
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ fontWeight: "bold" }}>
+                {t("subject_name")}
+              </TableCell>
+              <TableCell sx={{ fontWeight: "bold" }}>
+                {t("total_score")}
+              </TableCell>
+              <TableCell sx={{ fontWeight: "bold" }}>{t("actions")}</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {subjects.map((subject, index) => (
+              <TableRow key={index}>
+                <TableCell>
+                  {editSubjectIndex === index ? (
+                    <TextField
+                      value={editSubjectValue.name}
+                      onChange={(e) =>
+                        setEditSubjectValue({
+                          ...editSubjectValue,
+                          name: e.target.value,
+                        })
+                      }
+                      size="small"
+                      autoFocus
+                      sx={{ width: { xs: "100%", sm: "150px" } }}
+                    />
+                  ) : (
+                    subject.name
+                  )}
+                </TableCell>
+                <TableCell>
+                  {editSubjectIndex === index ? (
+                    <TextField
+                      type="number"
+                      value={editSubjectValue.total}
+                      onChange={(e) =>
+                        setEditSubjectValue({
+                          ...editSubjectValue,
+                          total: parseInt(e.target.value, 10) || 0,
+                        })
+                      }
+                      size="small"
+                      inputProps={{ min: 0 }}
+                      sx={{ width: { xs: "60px", sm: "80px" } }}
+                    />
+                  ) : (
+                    subject.total
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Box sx={{ display: "flex", gap: 1 }}>
+                    {editSubjectIndex === index ? (
+                      <IconButton onClick={handleSaveSubjectEdit}>
+                        <SaveIcon color="success" fontSize="small" />
+                      </IconButton>
+                    ) : (
+                      <IconButton onClick={() => handleEditSubject(index)}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    )}
+                    <IconButton onClick={() => onDeleteSubject(index)}>
+                      <DeleteIcon color="error" fontSize="small" />
+                    </IconButton>
+                  </Box>
+                </TableCell>
+              </TableRow>
+            ))}
+            <TableRow>
+              <TableCell>
+                <TextField
+                  value={newSubjectName}
+                  onChange={(e) => setNewSubjectName(e.target.value)}
+                  placeholder={t("enter_subject_name")}
+                  size="small"
+                  sx={{ width: { xs: "100%", sm: "150px" } }}
+                  onKeyPress={(e) => {
+                    if (e.key === "Enter" && newSubjectTotal.trim() !== "") handleAddSubject();
+                  }}
+                />
+              </TableCell>
+              <TableCell>
+                <TextField
+                  type="number"
+                  value={newSubjectTotal}
+                  onChange={(e) => setNewSubjectTotal(e.target.value)}
+                  placeholder={t("total")}
+                  size="small"
+                  inputProps={{ min: 0 }}
+                  sx={{ width: { xs: "60px", sm: "80px" } }}
+                  onKeyPress={(e) => {
+                    if (e.key === "Enter" && newSubjectName.trim() !== "") handleAddSubject();
+                  }}
+                />
+              </TableCell>
+              <TableCell>
+                <IconButton
+                  onClick={handleAddSubject}
+                  disabled={
+                    newSubjectName.trim() === "" ||
+                    newSubjectTotal.trim() === "" ||
+                    parseInt(newSubjectTotal, 10) <= 0
+                  }
+                >
+                  <AddIcon color="primary" fontSize="small" />
+                </IconButton>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Box>
+    </Modal>
+  );
+};
+
+export default SubjectModal;
+
+
+
+and here we have vite.config.ts code:
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'mask-icon.svg'],
+      manifest: {
+        name: 'BrainBoard',
+        short_name: 'BrainBoard',
+        description: 'Student Result Management System',
+        theme_color: '#1976d2',
+        background_color: '#ffffff',
+        display: 'standalone',
+        icons: [
+          {
+            src: 'pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png'
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
+          }
+        ]
+      }
+    })
+  ]
+})
+
+
+here is index.html:
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1976d2" />
+    <meta name="description" content="BrainBoard - Student Result Management System" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="mask-icon" href="/mask-icon.svg" color="#FFFFFF" />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap"
+    />
+    <title>BrainBoard</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+
+here we have public folder:
+
+apple-touch-icon.png
+favicon.svg
+mask-icon.svg
+pwa-192x192.png
+pwa-512x512.png
+
+
+
+here we have dist folder:
+
+sw.js:
+if(!self.define){let e,s={};const i=(i,n)=>(i=new URL(i+".js",n).href,s[i]||new Promise((s=>{if("document"in self){const e=document.createElement("script");e.src=i,e.onload=s,document.head.appendChild(e)}else e=i,importScripts(i),s()})).then((()=>{let e=s[i];if(!e)throw new Error(`Module ${i} didn’t register its module`);return e})));self.define=(n,r)=>{const o=e||("document"in self?document.currentScript.src:"")||location.href;if(s[o])return;let c={};const l=e=>i(e,o),t={module:{uri:o},exports:c,require:l};s[o]=Promise.all(n.map((e=>t[e]||l(e)))).then((e=>(r(...e),c)))}}define(["./workbox-5ffe50d4"],(function(e){"use strict";self.skipWaiting(),e.clientsClaim(),e.precacheAndRoute([{url:"assets/html2canvas.esm-CBrSDip1.js",revision:null},{url:"assets/index-Bx_Qbg3r.js",revision:null},{url:"assets/index.es-DahUZH3O.js",revision:null},{url:"assets/purify.es-C_uT9hQ1.js",revision:null},{url:"index.html",revision:"6fa6f031edaf57128f714f2a4a0b98d5"},{url:"registerSW.js",revision:"1872c500de691dce40960bb85481de07"},{url:"favicon.svg",revision:"ba288d078b48d671d62c3c80b0c180ec"},{url:"apple-touch-icon.png",revision:"df00ed9e5264d39b911cead100f00beb"},{url:"mask-icon.svg",revision:"ba288d078b48d671d62c3c80b0c180ec"},{url:"pwa-192x192.png",revision:"1a8c96a7775163ba122b99cf999e36e7"},{url:"pwa-512x512.png",revision:"2f59c92fca92cf420a71069e76b8f847"},{url:"manifest.webmanifest",revision:"a6991fcd65c732e0eceb9d2e1e114a35"}],{}),e.cleanupOutdatedCaches(),e.registerRoute(new e.NavigationRoute(e.createHandlerBoundToURL("index.html")))}));
+
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/sw.js', { scope: '/' })})}
+
+
+
+
+
+
